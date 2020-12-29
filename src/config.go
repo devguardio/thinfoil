@@ -11,7 +11,12 @@ import (
 
 
 type ConfigT struct {
+    // name of interface and k/v tree
     Cluster         string `json:"cluster,omitempty"`
+    // list of networks to route through the interface by default.
+    // to prevent leakage due to transient route failure,
+    // routes are not added individually
+    Networks        []string `json:"networks,omitempty"`
     Endpoint        string `json:"endpoint,omitempty"`
     Routes          []string `json:"routes,omitempty"`
     PrivateKey      string `json:"private_key,omitempty"`
@@ -41,6 +46,7 @@ func ConfigLoad() {
         }
 
         Config.Cluster      = "starfeld";
+        Config.Networks     = []string{"169.254.0.0/16"}
         Config.PrivateKey   = secret.String();
         Config.PublicKey    = secret.PublicKey().String();
         Config.Endpoint     = getOutboundIP() + ":52525"

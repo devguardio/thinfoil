@@ -29,7 +29,7 @@ func Server() {
         panic("no routes in config.json");
     }
 
-    address := Config.Routes[0];
+    address := strings.Split(Config.Routes[0], "/")[0];
 
     for  {
         // register our node
@@ -135,7 +135,8 @@ func Server() {
             }
 
             c.JSON(http.StatusOK, gin.H{
-                "peers": peers,
+                "networks": Config.Networks,
+                "peers":    peers,
             });
 
             return;
@@ -180,7 +181,10 @@ func Server() {
                 peers = append(peers, val);
             }
 
-            metastr, err := json.Marshal(map[string]interface{}{"peers" : peers});
+            metastr, err := json.Marshal(map[string]interface{}{
+                "networks": Config.Networks,
+                "peers" :   peers,
+            });
             if err != nil { continue }
             err = ws.WriteMessage(websocket.BinaryMessage, metastr)
             if err != nil { panic(err) }

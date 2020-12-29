@@ -61,6 +61,22 @@ func WgStart() {
         err = netlink.AddrAdd(link, addr)
         if err != nil { panic(fmt.Errorf("netlink add route %s: %w", route, err)) }
     }
+
+	err = netlink.LinkSetUp(link);
+    if err != nil {
+		panic(fmt.Errorf("link up: %w", err));
+	}
+
+    for _, network := range Config.Networks {
+        _, net , err := net.ParseCIDR(network)
+        if err != nil { continue }
+        if net == nil { continue }
+        netlink.RouteAdd(&netlink.Route{
+            Dst:        net,
+            LinkIndex:  link.Attrs().Index,
+        })
+    }
+
 }
 
 
@@ -99,6 +115,8 @@ func WgPeers(peers []map[string]interface{}) {
             if err != nil { continue }
             if net == nil { continue }
             routes = append(routes, *net);
+
+
         }
 
         pc := wgtypes.PeerConfig{
@@ -111,6 +129,28 @@ func WgPeers(peers []map[string]interface{}) {
         }
 
         config.Peers = append(config.Peers, pc);
+
+        /*
+        this is a bad idea. user might accidently contact their default GW
+        by trying a bunch of ips in the vpc.
+        Instead we use Config.Networks to route the entire VPC,
+        so contacting a dead ip gets stopped by wg
+
+        link, _ := netlink.LinkByName(Config.Cluster)
+        for _,route_ := range routes_s {
+            route, ok := route_.(string);
+            if !ok {continue}
+
+            _, net , err := net.ParseCIDR(route)
+            if err != nil { continue }
+            if net == nil { continue }
+            netlink.RouteAdd(&netlink.Route{
+                Dst:        net,
+                LinkIndex:  link.Attrs().Index,
+            })
+        }
+        */
+
     }
 
 
