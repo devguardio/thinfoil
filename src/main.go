@@ -19,12 +19,18 @@ func init() {
     }
     rootCmd.SetVersionTemplate("{{printf \"%s\\n\" .Version}}");
 
-
     rootCmd.AddCommand(&cobra.Command{
         Use:    "server",
         Short:  "start a thinfoil server with consul backend",
         Run: func(cmd *cobra.Command, args []string) {
             Server();
+        },
+    });
+    rootCmd.AddCommand(&cobra.Command{
+        Use:    "client",
+        Short:  "start a thinfoil client",
+        Run: func(cmd *cobra.Command, args []string) {
+            Client();
         },
     });
 }

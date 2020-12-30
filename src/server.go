@@ -12,6 +12,7 @@ import (
     "github.com/gorilla/websocket"
     "context"
     "strings"
+    "net/url"
 )
 
 
@@ -39,13 +40,13 @@ func Server() {
             Name: "thinfoil",
             Checks: consulapi.AgentServiceChecks{
                 &consulapi.AgentServiceCheck{
-                    Name:       "keepalive",
+                    Name:       "thinfoil keepalive",
                     CheckID:    "thinfoil:keepalive",
                     TTL:        "30s",
                     //DeregisterCriticalServiceAfter: "120s",
                 },
                 &consulapi.AgentServiceCheck{
-                    Name:       "HTTP API",
+                    Name:       "thinfoil http API",
                     CheckID:    "thinfoil:api",
                     Interval:   "10s",
                     HTTP:       "http://" + address + "/health",
@@ -55,7 +56,7 @@ func Server() {
                 },
             },
             Meta:  map[string]string{
-                "public_key":       Config.PublicKey,
+                "public_key":       Config.publicKey,
                 "endpoint":         Config.Endpoint,
                 "routes":           strings.Join(Config.Routes, ","),
             },
@@ -69,38 +70,74 @@ func Server() {
         }
     }
 
+
+    // make sure our own system is in k/v
+
+    for {
+
+        val, err := json.Marshal(gin.H{
+            "public_key":   Config.publicKey,
+            "endpoint":     Config.Endpoint,
+            "routes":       Config.Routes,
+        });
+        if err != nil { panic(err) }
+
+        nodename , err := consul.Agent().NodeName();
+        if err != nil { panic(err) }
+
+        _, err = consul.KV().Put(&consulapi.KVPair{
+            Key:    "thinfoil/" + url.PathEscape(Config.Cluster) + "/peers/" + url.PathEscape(nodename),
+            Value:  val,
+        }, nil);
+
+        if err != nil {
+            log.Println(err)
+            log.Println("retry in 5s")
+            time.Sleep(5 * time.Second);
+        } else {
+            break;
+        }
+    }
+
+
+    log.Println("going live in 5");
+    time.Sleep(time.Second);
+    log.Println("going live in 4");
+    time.Sleep(time.Second);
+    log.Println("going live in 3");
+    time.Sleep(time.Second);
+    log.Println("going live in 2");
+    time.Sleep(time.Second);
+    log.Println("going live in 1");
+    time.Sleep(time.Second);
+
     go func() {
+        var index uint64 = 0;
         for {
             err := consul.Agent().UpdateTTL("thinfoil:keepalive", "", "passing");
             if err != nil {
                 panic(err);
             }
 
-            var index uint64 = 0;
-            for {
-                kvpairs, meta, err := consul.KV().List("thinfoil/hyperion/peers/", &consulapi.QueryOptions{
-                    WaitIndex:  index,
-                    WaitTime:   20 * time.Second,
-                });
-                if err != nil { panic(err) }
+            kvpairs, meta, err := consul.KV().List("thinfoil/" + url.PathEscape(Config.Cluster) + "/peers/", &consulapi.QueryOptions{
+                WaitIndex:  index,
+                WaitTime:   20 * time.Second,
+            });
+            if err != nil { panic(err) }
 
-                index = meta.LastIndex
+            index = meta.LastIndex
 
-                peers := make([]map[string]interface{}, 0);
-                for _,v := range kvpairs {
-                    val := make(map[string]interface{});
-                    err = json.Unmarshal(v.Value, &val);
-                    if err != nil { continue }
-                    peers = append(peers, val);
-                }
-                WgPeers(peers);
+            peers := make([]map[string]interface{}, 0);
+            for _,v := range kvpairs {
+                val := make(map[string]interface{});
+                err = json.Unmarshal(v.Value, &val);
+                if err != nil { continue }
+                peers = append(peers, val);
             }
+            WgPeers(peers);
 
         }
     }();
-
-
-
 
 
     router := gin.Default()
@@ -113,7 +150,7 @@ func Server() {
 
     router.GET("/thinfoil/info", func(c *gin.Context) {
         c.JSON(http.StatusOK, gin.H{
-            "public_key":    Config.PublicKey,
+            "public_key":    Config.publicKey,
             "endpoint":      Config.Endpoint,
         });
     })
@@ -123,7 +160,7 @@ func Server() {
 
         if !websocket.IsWebSocketUpgrade(c.Request) {
 
-            kvpairs, _, err := consul.KV().List("thinfoil/hyperion/peers/", (&consulapi.QueryOptions{
+            kvpairs, _, err := consul.KV().List("thinfoil/" + url.PathEscape(Config.Cluster) + "/peers/", (&consulapi.QueryOptions{
             }).WithContext(c.Request.Context()));
 
             peers := make([]map[string]interface{}, 0);
@@ -161,7 +198,7 @@ func Server() {
 
         var index uint64 = 0;
         for {
-            kvpairs, meta, err := consul.KV().List("thinfoil/hyperion/peers/", (&consulapi.QueryOptions{
+            kvpairs, meta, err := consul.KV().List("thinfoil/" + url.PathEscape(Config.Cluster) + "/peers/", (&consulapi.QueryOptions{
                 WaitIndex:  index,
             }).WithContext(ctx2));
             if err != nil {
@@ -192,7 +229,7 @@ func Server() {
 
     });
 
-    log.Fatal(router.Run(":80"))
+    log.Fatal(router.Run( address + ":80"))
 
 
 

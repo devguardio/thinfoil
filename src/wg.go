@@ -9,6 +9,7 @@ import (
     "net"
     "time"
     "log"
+    "strings"
 )
 
 
@@ -77,6 +78,19 @@ func WgStart() {
         })
     }
 
+    pm := make([]map[string]interface{}, 0);
+    for _, peer := range Config.BootstrapPeers {
+        routes := make([]interface{},0);
+        for _,r := range peer.Routes {
+            routes = append(routes, r);
+        }
+        pm = append(pm, map[string]interface{}{
+            "public_key":   peer.PublicKey,
+            "endpoint":     peer.Endpoint,
+            "routes":       routes,
+        });
+    }
+    WgPeers(pm);
 }
 
 
@@ -86,34 +100,55 @@ func WgPeers(peers []map[string]interface{}) {
     psk, err := wgtypes.ParseKey(Config.PresharedKey);
     if err != nil { panic(fmt.Errorf("config.json preshared_key: %w", err)) }
 
-
-    config := wgtypes.Config {}
-    config.ReplacePeers = true;
+    nupeers:= make(map[wgtypes.Key]wgtypes.PeerConfig,0);
 
     for _,peer := range peers {
         keepalive := 20 * time.Second;
 
         pubkey_s, ok := peer["public_key"].(string);
-        if !ok {continue}
+        if !ok {
+            log.Println("skipping, no public_key");
+            continue
+        }
         publickey, err := wgtypes.ParseKey(pubkey_s);
-        if err != nil {continue}
+        if err != nil {
+            log.Println("skipping, public_key:", err);
+            continue
+        }
 
-        endpoint_s, ok := peer["endpoint"].(string);
-        if !ok {continue}
-        endpoint, err := net.ResolveUDPAddr("udp", endpoint_s);
-        if err != nil {continue}
-
+        var endpoint *net.UDPAddr = nil;
+        if endpoint_s, ok := peer["endpoint"].(string); ok {
+            endpoint_s = strings.TrimSpace(endpoint_s);
+            if endpoint_s != "" {
+                endpoint, err = net.ResolveUDPAddr("udp", endpoint_s);
+                if err != nil {
+                    log.Println("cant parse endpoint ", endpoint_s, err);
+                }
+            }
+        }
 
         routes_s, ok := peer["routes"].([]interface{});
-        if !ok {continue}
+        if !ok {
+            log.Println("skipping, no routes");
+            continue
+        }
         routes := make([]net.IPNet,0)
         for _,route_ := range routes_s {
             route, ok := route_.(string);
-            if !ok {continue}
+            if !ok {
+                log.Println("skipping route, not string");
+                continue
+            }
 
             _, net , err := net.ParseCIDR(route)
-            if err != nil { continue }
-            if net == nil { continue }
+            if err != nil {
+                log.Println("skipping route:", err);
+                continue
+            }
+            if net == nil {
+                log.Println("skipping route: no net");
+                continue
+            }
             routes = append(routes, *net);
 
 
@@ -128,7 +163,7 @@ func WgPeers(peers []map[string]interface{}) {
             AllowedIPs:         routes,
         }
 
-        config.Peers = append(config.Peers, pc);
+        nupeers[publickey] = pc;
 
         /*
         this is a bad idea. user might accidently contact their default GW
@@ -159,7 +194,47 @@ func WgPeers(peers []map[string]interface{}) {
         panic(err)
     }
     defer wg.Close();
-    err = wg.ConfigureDevice(Config.Cluster, config);
-    if err != nil { panic(err) }
 
+    existing_device, err := wg.Device(Config.Cluster)
+    if err != nil {
+        panic(err)
+    }
+
+    existing_peers := make(map[wgtypes.Key]*wgtypes.Peer,0)
+    for _,v := range existing_device.Peers {
+        existing_peers[v.PublicKey] = &v;
+    }
+
+    nuconfig := wgtypes.Config{};
+
+    for k,_ := range existing_peers {
+        if nu, ok := nupeers[k]; ok {
+            // TODO need to check for differences?
+            nu.UpdateOnly = true;
+            nuconfig.Peers = append(nuconfig.Peers, nu);
+
+            log.Println("update ", k.String());
+            delete (nupeers,k);
+        } else {
+            //remove peers that are no longer in the new config
+            nuconfig.Peers = append(nuconfig.Peers, wgtypes.PeerConfig {
+                Remove:     true,
+                PublicKey:  k,
+            });
+            log.Println("remove ", k.String());
+        }
+    }
+
+    // add the rest that is not yet there
+    for k,v := range nupeers {
+        if k == existing_device.PublicKey {
+            continue;
+        }
+        log.Println("add ", k.String());
+        nuconfig.Peers = append(nuconfig.Peers, v);
+    }
+
+
+    err = wg.ConfigureDevice(Config.Cluster, nuconfig);
+    if err != nil { panic(err) }
 }

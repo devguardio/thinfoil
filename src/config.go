@@ -6,9 +6,16 @@ import (
     "log"
     "golang.zx2c4.com/wireguard/wgctrl/wgtypes"
     "net"
+    "fmt"
 )
 
 
+
+type BootstrapPeer struct {
+    Endpoint        string      `json:"endpoint,omitempty"`
+    Routes          []string    `json:"routes,omitempty"`
+    PublicKey       string      `json:"public_key,omitempty"`
+}
 
 type ConfigT struct {
     // name of interface and k/v tree
@@ -20,8 +27,11 @@ type ConfigT struct {
     Endpoint        string `json:"endpoint,omitempty"`
     Routes          []string `json:"routes,omitempty"`
     PrivateKey      string `json:"private_key,omitempty"`
-    PublicKey       string `json:"public_key,omitempty"`
     PresharedKey    string `json:"preshared_key,omitempty"`
+    BootstrapPeers  []BootstrapPeer `json:"bootstrap_peers"`
+
+    publicKey       string
+
 }
 
 var Config ConfigT;
@@ -40,27 +50,45 @@ func ConfigLoad() {
             log.Fatal(err);
         }
 
+        Config.publicKey  = secret.PublicKey().String();
+
         psk, err := wgtypes.GenerateKey();
         if err != nil {
             log.Fatal(err);
         }
 
         Config.Cluster      = "starfeld";
-        Config.Networks     = []string{"169.254.0.0/16"}
+        Config.Networks     = []string{"172.27.0.0/15"}
         Config.PrivateKey   = secret.String();
-        Config.PublicKey    = secret.PublicKey().String();
         Config.Endpoint     = getOutboundIP() + ":52525"
         Config.PresharedKey = psk.String();
-        Config.Routes       = []string{"169.254.1.2/32"};
+        Config.Routes       = []string{"172.27.0.10/32"};
+        Config.BootstrapPeers = []BootstrapPeer{}
 
-        log.Printf("created new config.json, make preshared_key the same everywhere and change address to a free ip\n\n");
 
-        err = json.NewEncoder(file).Encode(&Config);
+        jw := json.NewEncoder(file);
+        jw.SetIndent("", " ");
+        err = jw.Encode(&Config);
         if err != nil {
             log.Fatal(err);
         }
 
         file.Seek(0,0);
+
+        bs, err := json.Marshal(&BootstrapPeer{
+            Endpoint:   Config.Endpoint,
+            Routes:     Config.Routes,
+            PublicKey:  Config.publicKey,
+        });
+        if err != nil {
+            log.Fatal(err);
+        }
+
+        fmt.Println("created new config.json, make preshared_key the same everywhere and change routes to a unique ip");
+        fmt.Println("put this into the other peers config.json under bootstrap_peers, with route changed as well:");
+        fmt.Println("");
+        fmt.Println(string(bs));
+        os.Exit(0);
     }
     defer file.Close()
 
@@ -68,7 +96,28 @@ func ConfigLoad() {
     if err != nil {
         log.Fatal(err);
     }
+
+    secret , err := wgtypes.ParseKey(Config.PrivateKey);
+    if err != nil { panic(fmt.Errorf("config.json private_key: %w", err)) }
+    Config.publicKey  = secret.PublicKey().String();
 }
+
+func ConfigStore() {
+    file, err := os.OpenFile("config.json", os.O_RDWR|os.O_CREATE, 0600)
+    if err != nil {
+        log.Fatal("cannot create config.json : ", err);
+        return;
+    }
+    defer file.Close();
+
+    jw := json.NewEncoder(file);
+    jw.SetIndent("", " ");
+    err = jw.Encode(&Config);
+    if err != nil {
+        log.Fatal(err);
+    }
+}
+
 
 func getOutboundIP() string {
     conn, err := net.Dial("udp", "8.8.8.8:80")
