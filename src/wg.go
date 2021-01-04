@@ -18,18 +18,17 @@ func WgStart() {
 
     // bring up link
     link, _ := netlink.LinkByName(Config.Cluster)
-    if link != nil {
-        netlink.LinkDel(link)
-    }
-    wirelink := &netlink.GenericLink{
-        LinkAttrs: netlink.LinkAttrs{
-            Name: Config.Cluster,
-        },
-        LinkType: "wireguard",
-    };
-    err := netlink.LinkAdd(wirelink)
-    if err != nil {
-        panic(err);
+    if link == nil {
+        wirelink := &netlink.GenericLink{
+            LinkAttrs: netlink.LinkAttrs{
+                Name: Config.Cluster,
+            },
+            LinkType: "wireguard",
+        };
+        err := netlink.LinkAdd(wirelink)
+        if err != nil {
+            panic(err);
+        }
     }
 
     // bring up wg
@@ -60,7 +59,9 @@ func WgStart() {
         addr, err := netlink.ParseAddr(route)
         if err != nil { panic(fmt.Errorf("config.json routes: %w", err)) }
         err = netlink.AddrAdd(link, addr)
-        if err != nil { panic(fmt.Errorf("netlink add route %s: %w", route, err)) }
+        if err != nil {
+            log.Println(fmt.Errorf("netlink add route %s: %w", route, err))
+        }
     }
 
 	err = netlink.LinkSetUp(link);
